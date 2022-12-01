@@ -1,4 +1,4 @@
-image: golang:1.18
+image: luthersystems/build-go:v0.0.59
 
 pipelines:
   pull-requests:
