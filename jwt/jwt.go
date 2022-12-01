@@ -52,7 +52,6 @@ type Claims struct {
 	// OID Microsoft AD uses OID field as another subject ID.
 	OID string `json:"oid,omitempty"`
 
-	// Missing OIDC claims https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims:
 	FamilyName          string   `json:"family_name,omitempty"`
 	GivenName           string   `json:"given_name,omitempty"`
 	MiddleName          string   `json:"middle_name,omitempty"`
