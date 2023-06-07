@@ -10,3 +10,7 @@ go-test:
 .PHONY: static-checks
 static-checks:
 	./scripts/static-checks.sh
+
+.PHONY: citest
+citest: print-go-env static-checks go-test
+	@
