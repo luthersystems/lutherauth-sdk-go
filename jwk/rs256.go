@@ -247,37 +247,39 @@ func (s *Settings) putKey(issuer string, kid string, key *rsa.PublicKey) {
 	s.cache.putKey(issuer, kid, key)
 }
 
+func newHTTPClient() *http.Client {
+	var netTransport = &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout: 5 * time.Second,
+		}).Dial,
+		TLSHandshakeTimeout: 5 * time.Second,
+		Proxy:               http.ProxyFromEnvironment,
+	}
+	return &http.Client{
+		Timeout:   time.Second * 10,
+		Transport: netTransport,
+	}
+}
+
 func (s *Settings) retrieveWebKeys(issuer string) (*gojwk.Key, error) {
 	if issuer == "" {
 		return nil, fmt.Errorf("invalid issuer")
 	}
-	if s.retrieveWebKeysFn != nil {
-		return s.retrieveWebKeysFn(issuer)
+	if s.retrieveWebKeysFn == nil && s.issuerToWebKeyURLFn == nil {
+		return nil, fmt.Errorf("missing all web key fns")
 	}
 	if s.issuerToWebKeyURLFn == nil {
-		// nothing we can do...
-		return nil, fmt.Errorf("cannot map issuer to web key URL")
+		return s.retrieveWebKeysFn(issuer)
 	}
+
+	webKeyURL, err := s.issuerToWebKeyURLFn(issuer)
+	if err != nil || webKeyURL == "" {
+		return s.retrieveWebKeysFn(issuer)
+	}
+
 	client := s.httpClient
 	if client == nil {
-		var netTransport = &http.Transport{
-			Dial: (&net.Dialer{
-				Timeout: 5 * time.Second,
-			}).Dial,
-			TLSHandshakeTimeout: 5 * time.Second,
-			Proxy:               http.ProxyFromEnvironment,
-		}
-		client = &http.Client{
-			Timeout:   time.Second * 10,
-			Transport: netTransport,
-		}
-	}
-	webKeyURL, err := s.issuerToWebKeyURLFn(issuer)
-	if err != nil {
-		return nil, err
-	}
-	if webKeyURL == "" {
-		return nil, fmt.Errorf("missing web key URL")
+		client = newHTTPClient()
 	}
 
 	return retrieveWebKeys(client, webKeyURL)
@@ -327,8 +329,8 @@ func WithHardcodedKey(pubKey crypto.PublicKey, kid string) Option {
 }
 
 // WithRetrieveWebKeysFn allows specifying a custom function to retrieve keys.
-// If this function is specified, then it will override WithIssuerToWebKeyURL
-// option.
+// If this function is specified with WithIssuerWebKeyURL, then it will only be
+// called if WithIssuerWebKeyURL cannot resolve the URL.
 func WithRetrieveWebKeysFn(retrieveWebKeysFn func(issuer string) (*gojwk.Key, error)) Option {
 	return func(s *Settings) {
 		s.retrieveWebKeysFn = retrieveWebKeysFn
@@ -337,6 +339,7 @@ func WithRetrieveWebKeysFn(retrieveWebKeysFn func(issuer string) (*gojwk.Key, er
 
 // WithIssuerToWebKeyURL allows specifying a custom function to map an issuer id
 // to a URL that has keys (JWKS).
+// This function handler takes precedence over WithRetrieveWebKeysFn.
 func WithIssuerToWebKeyURL(issuerToWebKeyURLFn func(issuer string) (string, error)) Option {
 	return func(s *Settings) {
 		s.issuerToWebKeyURLFn = issuerToWebKeyURLFn
