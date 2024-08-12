@@ -8,8 +8,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: luthersystems/build-go:v0.0.67
+      image: luthersystems/build-go:v0.0.88
     steps:
-    - uses: actions/checkout@v3.5.0
-    - name: Run CI tests
-      run: make citest
+      - uses: actions/checkout@v4
+      - name: Run CI tests
+        run: make citest
