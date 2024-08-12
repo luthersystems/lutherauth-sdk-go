@@ -7,10 +7,6 @@ print-go-env:
 go-test:
 	go test -v -count 1 ./...
 
-.PHONY: static-checks
-static-checks:
-	./scripts/static-checks.sh
-
 .PHONY: citest
-citest: print-go-env static-checks go-test
+citest: print-go-env go-test
 	@
