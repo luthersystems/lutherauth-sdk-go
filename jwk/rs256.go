@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -263,17 +264,30 @@ func newHTTPClient() *http.Client {
 
 func (s *Settings) retrieveWebKeys(issuer string) (*gojwk.Key, error) {
 	if issuer == "" {
-		return nil, fmt.Errorf("invalid issuer")
+		return nil, errors.New("invalid issuer")
 	}
 	if s.retrieveWebKeysFn == nil && s.issuerToWebKeyURLFn == nil {
-		return nil, fmt.Errorf("missing all web key fns")
+		return nil, errors.New("missing all web key fns")
 	}
 	if s.issuerToWebKeyURLFn == nil {
 		return s.retrieveWebKeysFn(issuer)
 	}
 
 	webKeyURL, err := s.issuerToWebKeyURLFn(issuer)
-	if err != nil || webKeyURL == "" {
+
+	if err != nil {
+		if s.retrieveWebKeysFn == nil {
+			return nil, fmt.Errorf(
+				"retrieveWebKeysFn is not defined, and issuerToWebKeyURLFn failed: %w", err,
+			)
+		}
+		return s.retrieveWebKeysFn(issuer)
+	}
+
+	if webKeyURL == "" {
+		if s.retrieveWebKeysFn == nil {
+			return nil, errors.New("retrieveWebKeysFn is not defined and webKeyURL is empty")
+		}
 		return s.retrieveWebKeysFn(issuer)
 	}
 
