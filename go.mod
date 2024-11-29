@@ -3,7 +3,7 @@ module github.com/luthersystems/lutherauth-sdk-go
 go 1.22
 
 require (
-	github.com/golang-jwt/jwt/v4 v4.5.0
+	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/mendsley/gojwk v0.0.0-20141217222730-4d5ec6e58103
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.8.4
