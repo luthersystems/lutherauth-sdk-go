@@ -23,23 +23,33 @@ import (
 
 // parseClaims parses a token for claims, and validates using a signature key.
 func parseClaims(tokenString string, pubKey *rsa.PublicKey, validate bool, claims jwtgo.Claims) (*jwtgo.Token, error) {
-	var parser jwtgo.Parser
+	var parser *jwtgo.Parser
 	alg := jwtgo.SigningMethodRS256.Name
-	parser = jwtgo.Parser{ValidMethods: []string{alg}}
+	if validate {
+		parser = jwtgo.NewParser(jwtgo.WithValidMethods([]string{alg}))
+	} else {
+		parser = jwtgo.NewParser(jwtgo.WithValidMethods([]string{alg}), jwtgo.WithoutClaimsValidation())
+	}
+
 	token, err := parser.ParseWithClaims(tokenString, claims, func(token *jwtgo.Token) (verifykey interface{}, err error) {
 		return pubKey, nil
 	})
-	// NOTE: we check err futher down due to how jwt-go handles sig verification errors
+
+	if err != nil {
+		if errors.Is(err, jwtgo.ErrTokenMalformed) {
+			return nil, fmt.Errorf("malformed token: %w", err)
+		}
+		if errors.Is(err, jwtgo.ErrTokenSignatureInvalid) {
+			return nil, fmt.Errorf("invalid signature: %w", err)
+		}
+		if errors.Is(err, jwtgo.ErrTokenExpired) {
+			return nil, fmt.Errorf("expired token: %w", err)
+		}
+		return nil, fmt.Errorf("token validation failed: %w", err)
+	}
+
 	if token == nil {
 		return nil, fmt.Errorf("nil jwk token")
-	}
-	validErr := token.Claims.Valid()
-	if validate && validErr != nil {
-		return nil, fmt.Errorf("jwk token claim invalid: %v", validErr)
-	}
-	// NOTE: check if there was a parse error from above
-	if err != nil {
-		return nil, err
 	}
 	if !token.Valid {
 		return nil, fmt.Errorf("invalid jwk token")
