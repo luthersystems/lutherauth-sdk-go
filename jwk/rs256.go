@@ -19,6 +19,7 @@ import (
 
 	jwtgo "github.com/golang-jwt/jwt/v4"
 	"github.com/mendsley/gojwk"
+	"github.com/sirupsen/logrus"
 )
 
 // parseClaims parses a token for claims, and validates using a signature key.
@@ -353,20 +354,46 @@ func WithHardcodedKey(pubKey crypto.PublicKey, kid string) Option {
 }
 
 // WithRetrieveWebKeysFn allows specifying a custom function to retrieve keys.
-// If this function is specified with WithIssuerWebKeyURL, then it will only be
-// called if WithIssuerWebKeyURL cannot resolve the URL.
+// If this function is specified with WithIssuerToWebKeyURL, then it will only be
+// called if WithIssuerToWebKeyURL cannot resolve the URL.
 func WithRetrieveWebKeysFn(retrieveWebKeysFn func(issuer string) (*gojwk.Key, error)) Option {
 	return func(s *Settings) {
-		s.retrieveWebKeysFn = retrieveWebKeysFn
+		oldFn := s.retrieveWebKeysFn
+		s.retrieveWebKeysFn = func(issuer string) (*gojwk.Key, error) {
+			if oldFn != nil {
+				key, err := oldFn(issuer)
+				if err != nil {
+					logrus.WithError(err).Debug("retrieveWebKeysFn")
+				} else if key != nil {
+					return key, nil
+				}
+			}
+
+			return retrieveWebKeysFn(issuer)
+		}
 	}
 }
 
 // WithIssuerToWebKeyURL allows specifying a custom function to map an issuer id
 // to a URL that has keys (JWKS).
 // This function handler takes precedence over WithRetrieveWebKeysFn.
+// You can pass multiple options in which case they'll be evaluated in the order
+// they are passed, and the first successful response is returned.
 func WithIssuerToWebKeyURL(issuerToWebKeyURLFn func(issuer string) (string, error)) Option {
 	return func(s *Settings) {
-		s.issuerToWebKeyURLFn = issuerToWebKeyURLFn
+		oldFn := s.issuerToWebKeyURLFn
+		s.issuerToWebKeyURLFn = func(issuer string) (string, error) {
+			if oldFn != nil {
+				url, err := oldFn(issuer)
+				if err != nil {
+					logrus.WithError(err).Debug("issuerToWebKeyURLFn")
+				} else if url != "" {
+					return url, nil
+				}
+			}
+
+			return issuerToWebKeyURLFn(issuer)
+		}
 	}
 }
 
