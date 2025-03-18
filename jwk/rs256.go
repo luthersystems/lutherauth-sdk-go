@@ -354,8 +354,8 @@ func WithHardcodedKey(pubKey crypto.PublicKey, kid string) Option {
 }
 
 // WithRetrieveWebKeysFn allows specifying a custom function to retrieve keys.
-// If this function is specified with WithIssuerWebKeyURL, then it will only be
-// called if WithIssuerWebKeyURL cannot resolve the URL.
+// If this function is specified with WithIssuerToWebKeyURL, then it will only be
+// called if WithIssuerToWebKeyURL cannot resolve the URL.
 func WithRetrieveWebKeysFn(retrieveWebKeysFn func(issuer string) (*gojwk.Key, error)) Option {
 	return func(s *Settings) {
 		oldFn := s.retrieveWebKeysFn
