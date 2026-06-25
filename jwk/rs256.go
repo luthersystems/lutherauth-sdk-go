@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -241,8 +242,16 @@ type Settings struct {
 	cache               *keyCache
 	retrieveWebKeysFn   func(issuer string) (*gojwk.Key, error)
 	issuerToWebKeyURLFn func(issuer string) (string, error)
-	httpClient          *http.Client
-	getNow              func() time.Time // Allows us to mock the current time
+	// expectedAudienceFn returns the set of acceptable `aud` values for tokens
+	// from the given issuer. A nil function or an empty result means the
+	// audience is not checked for that issuer (backwards-compatible).
+	expectedAudienceFn func(issuer string) []string
+	// expectedSubjectFn returns the set of acceptable `sub` values for tokens
+	// from the given issuer. A nil function or an empty result means the
+	// subject is not checked for that issuer (backwards-compatible).
+	expectedSubjectFn func(issuer string) []string
+	httpClient        *http.Client
+	getNow            func() time.Time // Allows us to mock the current time
 }
 
 func (s *Settings) getKey(issuer string, kid string) *rsa.PublicKey {
@@ -397,6 +406,52 @@ func WithIssuerToWebKeyURL(issuerToWebKeyURLFn func(issuer string) (string, erro
 	}
 }
 
+// WithExpectedAudience restricts which `aud` (audience) values are accepted for
+// tokens from a given issuer. The supplied function receives the token issuer
+// and returns the set of acceptable audiences for it; an empty/nil result means
+// the audience is not checked for that issuer (backwards-compatible). Multiple
+// calls accumulate — the per-issuer sets are unioned — mirroring
+// WithIssuerToWebKeyURL's chaining. Enforced in ValidateRS256.
+func WithExpectedAudience(audienceForIssuer func(issuer string) []string) Option {
+	return func(s *Settings) {
+		oldFn := s.expectedAudienceFn
+		s.expectedAudienceFn = func(issuer string) []string {
+			var out []string
+			if oldFn != nil {
+				out = append(out, oldFn(issuer)...)
+			}
+			return append(out, audienceForIssuer(issuer)...)
+		}
+	}
+}
+
+// WithExpectedSubject restricts which `sub` (subject) values are accepted for
+// tokens from a given issuer, with the same semantics as WithExpectedAudience.
+// Useful to pin a federated workload identity (e.g. a specific Vercel
+// project/environment subject). Enforced in ValidateRS256.
+func WithExpectedSubject(subjectForIssuer func(issuer string) []string) Option {
+	return func(s *Settings) {
+		oldFn := s.expectedSubjectFn
+		s.expectedSubjectFn = func(issuer string) []string {
+			var out []string
+			if oldFn != nil {
+				out = append(out, oldFn(issuer)...)
+			}
+			return append(out, subjectForIssuer(issuer)...)
+		}
+	}
+}
+
+// audienceIntersects reports whether any element of have appears in want.
+func audienceIntersects(have jwtgo.ClaimStrings, want []string) bool {
+	for _, h := range have {
+		if slices.Contains(want, h) {
+			return true
+		}
+	}
+	return false
+}
+
 // WithHTTPClient allows specifying a custom http client used to retrieve
 // web keys.
 func WithHTTPClient(httpClient *http.Client) Option {
@@ -495,6 +550,23 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 			if !isAfterWithDrift(now, regClaims.NotBefore.Time) {
 				return nil, fmt.Errorf("jwt received too early (now) [%d] <= nbf [%d]", now.Unix(), regClaims.NotBefore.Time.Unix())
 			}
+		}
+	}
+
+	// Enforce per-issuer audience / subject allowlists when configured. These are
+	// checked on the parsed RegisteredClaims before signature verification, which
+	// is safe: the signature check below still gates every successful return, so a
+	// forged token cannot pass it. Issuers with no configured allowlist are not
+	// checked, keeping the legacy (lutherauth) path unchanged. Added for Vercel
+	// OIDC federation (luthersystems/reliable#2175).
+	if settings.expectedAudienceFn != nil {
+		if want := settings.expectedAudienceFn(issuer); len(want) > 0 && !audienceIntersects(regClaims.Audience, want) {
+			return nil, fmt.Errorf("audience not accepted for issuer %q", issuer)
+		}
+	}
+	if settings.expectedSubjectFn != nil {
+		if want := settings.expectedSubjectFn(issuer); len(want) > 0 && !slices.Contains(want, regClaims.Subject) {
+			return nil, fmt.Errorf("subject not accepted for issuer %q", issuer)
 		}
 	}
 
