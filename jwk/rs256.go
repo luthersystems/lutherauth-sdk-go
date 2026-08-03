@@ -532,12 +532,12 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 			// The processing of the "exp" claim requires that the current date/time
 			// MUST be before the expiration date/time listed in the "exp" claim.
 			if !isAfterWithDrift(regClaims.ExpiresAt.Time, now) {
-				return nil, fmt.Errorf("jwt expired at (exp) [%d] <= now [%d]", regClaims.ExpiresAt.Time.Unix(), now.Unix())
+				return nil, fmt.Errorf("jwt expired at (exp) [%d] <= now [%d]", regClaims.ExpiresAt.Unix(), now.Unix())
 			}
 			if regClaims.IssuedAt != nil && !isBeforeWithDrift(regClaims.IssuedAt.Time, regClaims.ExpiresAt.Time) {
 				// This indicates something wrong with the IDP configuration, but is not
 				// a requirement by RFC7519.
-				return nil, fmt.Errorf("jwt issued at (iat) [%d] >= expires at (exp) [%d]", regClaims.IssuedAt.Time.Unix(), regClaims.ExpiresAt.Unix())
+				return nil, fmt.Errorf("jwt issued at (iat) [%d] >= expires at (exp) [%d]", regClaims.IssuedAt.Unix(), regClaims.ExpiresAt.Unix())
 			}
 		}
 
@@ -548,7 +548,7 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 			// Implementers MAY provide for some small leeway, usually no more than a few minutes, to
 			// account for clock skew.
 			if !isAfterWithDrift(now, regClaims.NotBefore.Time) {
-				return nil, fmt.Errorf("jwt received too early (now) [%d] <= nbf [%d]", now.Unix(), regClaims.NotBefore.Time.Unix())
+				return nil, fmt.Errorf("jwt received too early (now) [%d] <= nbf [%d]", now.Unix(), regClaims.NotBefore.Unix())
 			}
 		}
 	}
