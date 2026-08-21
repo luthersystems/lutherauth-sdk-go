@@ -270,9 +270,9 @@ func (s *Settings) putKey(issuer string, kid string, key *rsa.PublicKey) {
 
 func newHTTPClient() *http.Client {
 	var netTransport = &http.Transport{
-		Dial: (&net.Dialer{
+		DialContext: (&net.Dialer{
 			Timeout: 5 * time.Second,
-		}).Dial,
+		}).DialContext,
 		TLSHandshakeTimeout: 5 * time.Second,
 		Proxy:               http.ProxyFromEnvironment,
 	}
