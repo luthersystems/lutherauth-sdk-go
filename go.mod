@@ -5,9 +5,9 @@ go 1.25.0
 require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/mendsley/gojwk v0.0.0-20141217222730-4d5ec6e58103
-	github.com/sirupsen/logrus v1.10.0
+	github.com/sirupsen/logrus v1.10.1
 	github.com/stretchr/testify v1.12.1
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 )
 
 require (
