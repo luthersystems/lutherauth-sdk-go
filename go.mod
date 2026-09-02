@@ -7,7 +7,7 @@ require (
 	github.com/mendsley/gojwk v0.0.0-20141217222730-4d5ec6e58103
 	github.com/sirupsen/logrus v1.10.0
 	github.com/stretchr/testify v1.12.1
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 )
 
 require (
