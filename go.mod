@@ -2,6 +2,8 @@ module github.com/luthersystems/lutherauth-sdk-go
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/mendsley/gojwk v0.0.0-20141217222730-4d5ec6e58103

@@ -22,6 +22,16 @@ jobs:
           # Fleet-wide pin (matches luthersystems/ui-core); built with go1.26,
           # matching the go-version above.
           version: v2.13.2
+          args: --timeout=5m ./...
+          # `verify: true` fetches the JSON schema from golangci-lint.run on
+          # every run, and a timeout there fails the job for a reason no PR can
+          # fix (seen in luthersystems/elps). The next step runs the same
+          # check offline: v2.13 embeds the schema in the binary.
+          verify: false
+      # `golangci-lint run` does NOT reject an unknown key in .golangci.yml (a
+      # misspelled setting is silently ignored); only the schema check does.
+      - name: golangci-lint config schema
+        run: golangci-lint config verify
   build:
     name: build
     runs-on: ubuntu-latest
@@ -35,14 +45,31 @@ jobs:
         run: go test -v ./...
   # Known-vulnerability gate: call-graph-aware, fails only on vulns whose
   # vulnerable code this module actually reaches.
+  #
+  # A green tick is a statement about the live advisory database at that
+  # moment, not a durable property of the commit: an unchanged branch can go
+  # red when an advisory lands. govulncheck-scheduled.yml re-scans main daily.
   govulncheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          # EXACT: go.mod's `toolchain` line (same approach as
+          # luthersystems/elps). govulncheck reports stdlib advisories against
+          # the Go that runs the scan. "1.26.x" + check-latest resolved to
+          # go1.26.8 because setup-go's manifest lagged go.dev, and the scan
+          # failed on advisories fixed in go1.26.9. An exact version missing
+          # from the manifest is downloaded from go.dev instead. Bump the
+          # toolchain line in go.mod to pick up a new patch.
+          go-version-file: go.mod
+          check-latest: true
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pinned to an audited release (same as luthersystems/elps); the
+          # scanner still queries the live advisory DB. v1.8.0 requires Go 1.26.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
