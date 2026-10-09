@@ -58,10 +58,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
-          # Newest 1.26 patch from go.dev rather than whatever the runner's
-          # manifest has cached. govulncheck reports stdlib advisories against
-          # the Go that runs the scan, so a lagging patch gives false findings.
+          # EXACT: go.mod's `toolchain` line (same approach as
+          # luthersystems/elps). govulncheck reports stdlib advisories against
+          # the Go that runs the scan. "1.26.x" + check-latest resolved to
+          # go1.26.8 because setup-go's manifest lagged go.dev, and the scan
+          # failed on advisories fixed in go1.26.9. An exact version missing
+          # from the manifest is downloaded from go.dev instead. Bump the
+          # toolchain line in go.mod to pick up a new patch.
+          go-version-file: go.mod
           check-latest: true
       - name: Run govulncheck
         run: |
