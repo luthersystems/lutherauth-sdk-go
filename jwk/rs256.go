@@ -33,7 +33,7 @@ func parseClaims(tokenString string, pubKey *rsa.PublicKey, validate bool, claim
 		parser = jwtgo.NewParser(jwtgo.WithValidMethods([]string{alg}), jwtgo.WithoutClaimsValidation())
 	}
 
-	token, err := parser.ParseWithClaims(tokenString, claims, func(token *jwtgo.Token) (verifykey interface{}, err error) {
+	token, err := parser.ParseWithClaims(tokenString, claims, func(*jwtgo.Token) (interface{}, error) {
 		return pubKey, nil
 	})
 
@@ -51,30 +51,37 @@ func parseClaims(tokenString string, pubKey *rsa.PublicKey, validate bool, claim
 	}
 
 	if token == nil {
-		return nil, fmt.Errorf("nil jwk token")
+		return nil, errors.New("nil jwk token")
 	}
 	if !token.Valid {
-		return nil, fmt.Errorf("invalid jwk token")
+		return nil, errors.New("invalid jwk token")
 	}
 	return token, nil
 }
 
 // retrieveWebKeys is a helper that returns web keys.
 func retrieveWebKeys(httpClient *http.Client, url string) (*gojwk.Key, error) {
-	res, err := httpClient.Get(url)
+	// ValidateRS256, the only caller, takes no context, so there is none to
+	// pass down. The fetch is bounded by httpClient's Timeout instead.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("get JWKS (%s): %s", url, err)
+		return nil, fmt.Errorf("new JWKS request (%s): %w", url, err)
 	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get JWKS (%s): %w", url, err)
+	}
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bad status (%s): code: %d", url, res.StatusCode)
 	}
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read JWKS (%s) JSON: %s", url, err)
+		return nil, fmt.Errorf("read JWKS (%s) JSON: %w", url, err)
 	}
 	keys, err := gojwk.Unmarshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshal JWKS (%s): %s", url, err)
+		return nil, fmt.Errorf("unmarshal JWKS (%s): %w", url, err)
 	}
 	return keys, nil
 }
@@ -83,7 +90,7 @@ func retrieveWebKeys(httpClient *http.Client, url string) (*gojwk.Key, error) {
 func makeSignKey(rawE string, rawN string) (*rsa.PublicKey, error) {
 	decodedE, err := base64.RawURLEncoding.DecodeString(rawE)
 	if err != nil {
-		return nil, fmt.Errorf("error decoding rawE public key")
+		return nil, errors.New("error decoding rawE public key")
 	}
 	if len(decodedE) < 4 {
 		ndata := make([]byte, 4)
@@ -96,39 +103,28 @@ func makeSignKey(rawE string, rawN string) (*rsa.PublicKey, error) {
 	}
 	decodedN, err := base64.RawURLEncoding.DecodeString(rawN)
 	if err != nil {
-		return nil, fmt.Errorf("error decoding rawN public key")
+		return nil, errors.New("error decoding rawN public key")
 	}
 	pubKey.N.SetBytes(decodedN)
 	return pubKey, nil
 }
 
-// matchKID returns the N,E values of a JWK if kid matches one of the kids in
-// the webs keys.
-// Returns the raw E and N values associated with the matched JWT
-func matchKID(keys *gojwk.Key, kid string) (string, string, error) {
+// matchKID returns the JWK whose kid matches kid, either the top-level key or
+// one of its child keys. The raw E and N values of the matched key are in its
+// E and N fields.
+func matchKID(keys *gojwk.Key, kid string) (*gojwk.Key, error) {
 	if kid == "" {
-		return "", "", fmt.Errorf("no kid")
+		return nil, errors.New("no kid")
 	}
-	var rawE, rawN string
-	var kidMatch = false
 	if keys.Kid == kid {
-		kidMatch = true
-		rawE = keys.E
-		rawN = keys.N
-	} else {
-		for _, k := range keys.Keys {
-			if k.Kid == kid {
-				kidMatch = true
-				rawE = k.E
-				rawN = k.N
-				break
-			}
+		return keys, nil
+	}
+	for _, k := range keys.Keys {
+		if k.Kid == kid {
+			return k, nil
 		}
 	}
-	if !kidMatch {
-		return "", "", fmt.Errorf("missing kid [%s] in web keys", kid)
-	}
-	return rawE, rawN, nil
+	return nil, fmt.Errorf("missing kid [%s] in web keys", kid)
 }
 
 var defaultCacheDuration time.Duration = 10 * time.Minute
@@ -491,7 +487,7 @@ func isAfterWithDrift(t1, t2 time.Time) bool {
 // IMPORTANT: This does not validate the issuer.
 func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo.Claims, error) {
 	if token == "" {
-		return nil, fmt.Errorf("missing token")
+		return nil, errors.New("missing token")
 	}
 	parser := &jwtgo.Parser{}
 	parsedToken, _, err := parser.ParseUnverified(token, &jwtgo.RegisteredClaims{})
@@ -501,11 +497,11 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	// Grab claims *WITHOUT* validation (we need the issuer, kid first)
 	regClaims, ok := parsedToken.Claims.(*jwtgo.RegisteredClaims)
 	if !ok {
-		return nil, fmt.Errorf("invalid claim type")
+		return nil, errors.New("invalid claim type")
 	}
 	issuer := regClaims.Issuer
 	if issuer == "" {
-		return nil, fmt.Errorf("missing issuer")
+		return nil, errors.New("missing issuer")
 	}
 	alg, ok := parsedToken.Header["alg"].(string)
 	if !ok || alg != "RS256" {
@@ -573,24 +569,23 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	signKey := settings.getKey(issuer, kid)
 	if signKey != nil {
 		// This parses the claims *AND* validates the token
-		parsedToken, err := parseClaims(token, signKey, true, claims)
-		if err == nil {
+		if cachedToken, cacheErr := parseClaims(token, signKey, true, claims); cacheErr == nil {
 			// fast path: we have a good key!
-			return parsedToken.Claims, nil
+			return cachedToken.Claims, nil
 		}
 	}
 
 	webKeys, err := settings.retrieveWebKeys(issuer)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve web key (%s): %v", issuer, err)
+		return nil, fmt.Errorf("retrieve web key (%s): %w", issuer, err)
 	}
-	rawE, rawN, err := matchKID(webKeys, kid)
+	webKey, err := matchKID(webKeys, kid)
 	if err != nil {
-		return nil, fmt.Errorf("match KID (%s): %v", issuer, err)
+		return nil, fmt.Errorf("match KID (%s): %w", issuer, err)
 	}
-	signKey, err = makeSignKey(rawE, rawN)
+	signKey, err = makeSignKey(webKey.E, webKey.N)
 	if err != nil {
-		return nil, fmt.Errorf("make sign key (%s): %v", issuer, err)
+		return nil, fmt.Errorf("make sign key (%s): %w", issuer, err)
 	}
 
 	settings.putKey(issuer, kid, signKey)
@@ -598,7 +593,7 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	// This parses the claims *AND* validates the token
 	parsedToken, err = parseClaims(token, signKey, true, claims)
 	if err != nil {
-		return nil, fmt.Errorf("validate (%s): %v: %s", issuer, err, token)
+		return nil, fmt.Errorf("validate (%s): %w: %s", issuer, err, token)
 	}
 
 	return parsedToken.Claims, nil

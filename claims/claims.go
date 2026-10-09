@@ -72,7 +72,7 @@ func (s *fakeAuthClaims) Claims(ctx context.Context) (*jwt.Claims, error) {
 		return nil, status.Error(codes.Unauthenticated, "could not decode token (base64 step)")
 	}
 	claims := jwt.NewEmptyClaims(token)
-	err = json.Unmarshal([]byte(jsonToken), &claims)
+	err = json.Unmarshal(jsonToken, &claims)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "could not decode token (JSON step)")
 	}

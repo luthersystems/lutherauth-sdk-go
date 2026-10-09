@@ -65,7 +65,7 @@ func TestCache(t *testing.T) {
 
 	s.purgeExpired() // actually delete
 
-	require.Len(t, s.keys, 0)
+	require.Empty(t, s.keys)
 
 	s.stopExpirePoll()
 }

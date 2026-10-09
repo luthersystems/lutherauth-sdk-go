@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 
 	"github.com/mendsley/gojwk"
@@ -75,7 +76,7 @@ func pubKeyToKID(pubKey crypto.PublicKey) (string, error) {
 func MakeKeyFromPrivatePEM(prvPEM string) (*Key, error) {
 	block, _ := pem.Decode([]byte(prvPEM))
 	if block == nil {
-		return nil, fmt.Errorf("invalid pem block type")
+		return nil, errors.New("invalid pem block type")
 	}
 	var err error
 	var prvKey *rsa.PrivateKey
@@ -95,7 +96,7 @@ func MakeKeyFromPrivatePEM(prvPEM string) (*Key, error) {
 		} else {
 			rsaPrvKey, ok := prvKeyIface.(*rsa.PrivateKey)
 			if !ok {
-				return nil, fmt.Errorf("expected PKCS8 RSA private key")
+				return nil, errors.New("expected PKCS8 RSA private key")
 			}
 			prvKey = rsaPrvKey
 		}

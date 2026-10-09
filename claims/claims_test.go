@@ -87,7 +87,7 @@ func TestJWKClaims(t *testing.T) {
 func TestFakeAuthClaimsAudBackwardsCompat(t *testing.T) {
 	t.Parallel()
 	// IMPORTANT: this is token with a legacy format that does not have an aud array
-	token := "eyJ1c2VybmFtZSI6IiIsIm5hbWUiOiIiLCJsdXRoZXI6Z3JvdXBzIjpudWxsLCJvcmciOiIiLCJlbWFpbCI6IiIsIm5vbmNlIjoiIiwiYXVkIjoibHV0aGVyIiwiaXNzIjoiTHV0aGVyIFN5c3RlbXMgVGVzdCBJRFAiLCJzdWIiOiJtYXJ0aW4iLCJvaWQiOiIifQ" // nolint:gosec
+	token := "eyJ1c2VybmFtZSI6IiIsIm5hbWUiOiIiLCJsdXRoZXI6Z3JvdXBzIjpudWxsLCJvcmciOiIiLCJlbWFpbCI6IiIsIm5vbmNlIjoiIiwiYXVkIjoibHV0aGVyIiwiaXNzIjoiTHV0aGVyIFN5c3RlbXMgVGVzdCBJRFAiLCJzdWIiOiJtYXJ0aW4iLCJvaWQiOiIifQ" //nolint:gosec
 	claimsFactory := func(tokenGetter TokenGetter) Getter {
 		return NewFakeAuthClaims(tokenGetter)
 	}

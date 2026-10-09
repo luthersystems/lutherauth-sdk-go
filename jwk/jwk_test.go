@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	mrand "math/rand"
@@ -44,12 +45,12 @@ func TestWebKeyMatch(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	// fail to match
-	_, _, err = matchKID(wk, "")
+	_, err = matchKID(wk, "")
 	if err == nil {
 		t.Fatalf("expected error")
 	}
 	// success to match
-	_, _, err = matchKID(wk, kid)
+	_, err = matchKID(wk, kid)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -73,11 +74,11 @@ func TestRetrieveWebKey(t *testing.T) {
 	}
 
 	// success to match
-	e, n, err := matchKID(keys, kid)
+	k, err := matchKID(keys, kid)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	sign, err := makeSignKey(e, n)
+	sign, err := makeSignKey(k.E, k.N)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -92,7 +93,7 @@ func TestKeyCache(t *testing.T) {
 		t.Fatalf("expected empty cache")
 	}
 	kp := MakeTestKey()
-	cache.putKey("luther", "a123", kp.PubKey.(*rsa.PublicKey))
+	cache.putKey("luther", "a123", testRSAPubKey(t, kp))
 	k = cache.getKey("luther", "a123")
 	if k != kp.PubKey {
 		t.Fatalf("key mismatch")
@@ -150,7 +151,7 @@ type issuerKeys struct {
 func makeIssuerJWKS(numKeys int) *issuerKeys {
 	var keys []*Key
 	prvKeys := make(map[string]*rsa.PrivateKey)
-	for i := 0; i < numKeys; i++ {
+	for range numKeys {
 		k := MakeTestKey()
 		keys = append(keys, k)
 		prvKeys[k.Kid] = k.PrvKey
@@ -169,7 +170,7 @@ func randomKID(keys *gojwk.Key) string {
 	for _, k := range keys.Keys {
 		kids = append(kids, k.Kid)
 	}
-	return kids[mrand.Intn(len(kids))]
+	return kids[mrand.Intn(len(kids))] //nolint:gosec // picks a test fixture kid; not security sensitive
 }
 
 type tokenClaimsTest struct {
@@ -252,7 +253,7 @@ func runValidateTest(t *testing.T, issuerTestTable []issuerTest, claimsTestTable
 				t.Fatalf("unexpected error: %s", err)
 			}
 		}
-		if !test.someError && err != test.err {
+		if !test.someError && !errors.Is(err, test.err) {
 			t.Fatalf("unexpected error: got %s != expected %s", err, test.err)
 		}
 		if err == nil {
@@ -302,21 +303,21 @@ func TestSigValidation(t *testing.T) {
 	claims := &TestClaims{}
 	claims.Subject = "wat"
 	token, err := NewJWK(kp1.PrvKey, claims, "kid")
-	fmt.Println(string(token))
+	fmt.Println(token)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	_, err = parseClaims(token, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+	_, err = parseClaims(token, testRSAPubKey(t, kp1), true, &TestClaims{})
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	kp2 := MakeTestKey()
-	_, err = parseClaims(token, kp2.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+	_, err = parseClaims(token, testRSAPubKey(t, kp2), true, &TestClaims{})
 	if err == nil {
 		t.Fatalf("expected error!")
 	}
 	// try cracking open the token and mutating a claim
-	fields := strings.Split(string(token), ".")
+	fields := strings.Split(token, ".")
 	if len(fields) != 3 {
 		t.Fatalf("expected 3 fields in token")
 	}
@@ -328,7 +329,7 @@ func TestSigValidation(t *testing.T) {
 		}
 		fields[1] = base64.RawStdEncoding.EncodeToString(b)
 		mutatedToken := strings.Join(fields, ".")
-		_, err = parseClaims(mutatedToken, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		_, err = parseClaims(mutatedToken, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
@@ -341,7 +342,7 @@ func TestSigValidation(t *testing.T) {
 		}
 		fields[1] = base64.RawStdEncoding.EncodeToString(b)
 		mutatedToken := strings.Join(fields, ".")
-		_, err = parseClaims(mutatedToken, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		_, err = parseClaims(mutatedToken, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err == nil {
 			t.Fatalf("expected error!")
 		}
@@ -355,7 +356,7 @@ func TestSigValidation(t *testing.T) {
 		}
 		fields[1] = base64.RawStdEncoding.EncodeToString(b)
 		mutatedToken := strings.Join(fields, ".")
-		_, err = parseClaims(mutatedToken, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		_, err = parseClaims(mutatedToken, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err == nil {
 			t.Fatalf("expected error!")
 		}
@@ -369,7 +370,7 @@ func TestSigValidation(t *testing.T) {
 		}
 		fields[1] = base64.RawStdEncoding.EncodeToString(b)
 		mutatedToken := strings.Join(fields, ".")
-		_, err = parseClaims(mutatedToken, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		_, err = parseClaims(mutatedToken, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err == nil {
 			t.Fatalf("expected error!")
 		}
@@ -385,8 +386,8 @@ func TestSigValidation(t *testing.T) {
 			t.Fatalf("expected more claims in token")
 		}
 		// NOTE: the oid field is contained in the token as "", and NOT omitted
-		fmt.Println(string(token2))
-		_, err = parseClaims(token2, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		fmt.Println(token2)
+		_, err = parseClaims(token2, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err != nil {
 			// NOTE: somehow the library still validates the token even though TestClaims
 			// is a subset!
@@ -399,11 +400,22 @@ func TestSigValidation(t *testing.T) {
 		}
 		fields[1] = base64.RawStdEncoding.EncodeToString(b)
 		mutatedToken := strings.Join(fields, ".")
-		_, err = parseClaims(mutatedToken, kp1.PubKey.(*rsa.PublicKey), true, &TestClaims{})
+		_, err = parseClaims(mutatedToken, testRSAPubKey(t, kp1), true, &TestClaims{})
 		if err == nil {
 			// NOTE: somehow the library still validates the token even though TestClaims
 			// is a subset!
 			t.Fatalf("expected error!")
 		}
 	})
+}
+
+// testRSAPubKey returns kp's public key as an *rsa.PublicKey, failing the test
+// if it is any other type.
+func testRSAPubKey(t *testing.T, kp *Key) *rsa.PublicKey {
+	t.Helper()
+	pub, ok := kp.PubKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key type %T, want *rsa.PublicKey", kp.PubKey)
+	}
+	return pub
 }
