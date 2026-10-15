@@ -15,27 +15,21 @@ scenarios like:
 - Implementing fake claims for local development
 - Enforcing API key presence before extracting claims
 
----
+## Features
 
-## 🔧 Features
+- JWT claim extraction and validation via GRPC metadata or HTTP cookies
+- JWK (JSON Web Key) support with caching and configurable source resolution
+- Supports both authenticated and fake tokens for test/dev workflows
+- Pre-validation of API keys before extracting user claims
+- Lightweight and dependency-minimized for embedding into services
 
-- ✅ JWT claim extraction and validation via GRPC metadata or HTTP cookies
-- 🔐 JWK (JSON Web Key) support with caching and configurable source resolution
-- 🔄 Supports both authenticated and fake tokens for test/dev workflows
-- 🛡️ Pre-validation of API keys before extracting user claims
-- 📦 Lightweight and dependency-minimized for embedding into services
-
----
-
-## 📦 Installing
+## Installing
 
 ```bash
 go get github.com/luthersystems/lutherauth-sdk-go
 ```
 
----
-
-## 🛠️ Usage
+## Usage
 
 ### Basic Claim Validation
 
@@ -84,9 +78,7 @@ ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
 claims, err := getter.Claims(ctx)
 ```
 
----
-
-## 🔐 Token Sources Supported
+## Token Sources Supported
 
 | Source Type    | Description                           |
 | -------------- | ------------------------------------- |
@@ -94,9 +86,7 @@ claims, err := getter.Claims(ctx)
 | HTTP Cookies   | Reads from cookie headers             |
 | Custom Headers | e.g., `X-API-Key`, for API key checks |
 
----
-
-## 🔄 Pre-Validation with API Keys
+## Pre-Validation with API Keys
 
 To enforce API key validation before allowing claim extraction:
 
@@ -112,25 +102,19 @@ getter := claims.AddPreValidator(
 )
 ```
 
----
-
-## 🥪 Testing
+## Testing
 
 ```bash
 make go-test
 ```
 
----
+## Internal Modules
 
-## 🧱 Internal Modules
+- `claims/`: Core logic for retrieving and validating claims
+- `jwk/`: JWK key management and RS256 signature verification
+- `jwt/`: Structs and helpers for user claims and token duplication
 
-- `claims/` – Core logic for retrieving and validating claims
-- `jwk/` – JWK key management and RS256 signature verification
-- `jwt/` – Structs and helpers for user claims and token duplication
-
----
-
-## 🔎 Reference
+## Reference
 
 LutherAuth is designed to interoperate with OIDC-compliant identity providers,
 including Cognito and AzureAD. It issues signed JWTs used for session
@@ -139,9 +123,7 @@ by services using this SDK to authorize and personalize user interactions.
 
 See full documentation at: [GoDoc](https://pkg.go.dev/github.com/luthersystems/lutherauth-sdk-go)
 
----
-
-## 👨‍💼 Development
+## Development
 
 The SDK is used by services deployed across the Luther ecosystem. It adheres
 to strict security and logging practices to ensure auditability and
@@ -153,11 +135,7 @@ To contribute, follow the [standard Git workflow](https://www.atlassian.com/git/
 make go-test
 ```
 
----
-
-## 🏷️ Versioning
+## Versioning
 
 This SDK uses [semantic versioning](https://semver.org/) for releases. For
 pre-release builds, use `-SNAPSHOT` suffixes.
-
----
