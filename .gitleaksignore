@@ -1,0 +1,7 @@
+# gitleaks false positives. One fingerprint per line, from the Security
+# workflow's log. Add one only after you confirm the value is not a secret.
+
+# An unsigned fake-IDP claims payload (base64 JSON for user "martin") that
+# tests the legacy aud format. It carries no signature or key, so there is
+# nothing to rotate.
+claims/claims_test.go:generic-api-key:90
