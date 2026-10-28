@@ -1,0 +1,9 @@
+# Findings the shared Security workflow's gitleaks scan reports that are not
+# leaked secrets. One fingerprint per finding (file:rule:line, the form a
+# scheduled scan of the files at HEAD prints), so a new secret in the same
+# file still fails. A real secret is rotated first, never listed here.
+
+# Test fixture: an unsigned fake-auth token, the base64 of the claims
+# {"iss":"Luther Systems Test IDP","sub":"martin",...} and nothing else.
+# It carries no signature and grants nothing.
+claims/claims_test.go:generic-api-key:90
