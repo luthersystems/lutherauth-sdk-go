@@ -63,3 +63,14 @@ func TestAddPreValidator(t *testing.T) {
 	_, err = claimsGetter.Claims(ctx)
 	require.Error(t, err)
 }
+
+// TestAPIKeyValidatorIgnoresEmptyKey checks that an empty entry in the key
+// list (for example from splitting an empty setting) does not let an empty
+// API key in. A map lookup accepted it.
+func TestAPIKeyValidatorIgnoresEmptyKey(t *testing.T) {
+	t.Parallel()
+	validator := NewAPIKeyValidator(NewRawTokenGetter("X-API-Key", true), []string{"", "luther"})
+	err := validator.Validate(makeContext(map[string]string{"x-api-key": ""}))
+	require.Error(t, err)
+	require.NoError(t, validator.Validate(makeContext(map[string]string{"x-api-key": "luther"})))
+}

@@ -4,6 +4,7 @@ package claims
 
 import (
 	"context"
+	"crypto/subtle"
 
 	"github.com/luthersystems/lutherauth-sdk-go/jwt"
 	"google.golang.org/grpc/codes"
@@ -17,19 +18,22 @@ type PreValidator interface {
 
 type apiKeyValidator struct {
 	tokenGetter TokenGetter
-	keySet      map[string]interface{}
+	keys        [][]byte
 }
 
 // NewAPIKeyValidator validates a valid API key is present.
 func NewAPIKeyValidator(tokenGetter TokenGetter, keys []string) PreValidator {
-	keySet := make(map[string]interface{}, len(keys))
-	var empty interface{}
+	// A slice compared in constant time, not a map: a map lookup's time
+	// depends on the key, and these are secrets.
+	keyBytes := make([][]byte, 0, len(keys))
 	for _, k := range keys {
-		keySet[k] = empty
+		if k != "" {
+			keyBytes = append(keyBytes, []byte(k))
+		}
 	}
 	return &apiKeyValidator{
 		tokenGetter: tokenGetter,
-		keySet:      keySet,
+		keys:        keyBytes,
 	}
 }
 
@@ -39,7 +43,14 @@ func (s *apiKeyValidator) Validate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, ok := s.keySet[apiKey]
+	got := []byte(apiKey)
+	ok := false
+	for _, k := range s.keys {
+		// Check every key, so the time does not show which one matched.
+		if subtle.ConstantTimeCompare(got, k) == 1 {
+			ok = true
+		}
+	}
 	if !ok {
 		return status.Error(codes.Unauthenticated, "API key not recognized")
 	}
