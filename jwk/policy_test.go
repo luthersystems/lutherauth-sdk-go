@@ -154,3 +154,66 @@ func TestWithIssuerPolicyKeepsOtherOptions(t *testing.T) {
 	_, err = ValidateRS256(settings, &TestClaims{}, m.mint("https://idp.example", "", "workload-2"))
 	require.ErrorContains(t, err, "subject not accepted")
 }
+
+// TestWithIssuerPolicyJWKSWins checks that each issuer's keys come from its
+// own JWKSURL, even next to a catch-all WithIssuerToWebKeyURL, in either
+// option order. Otherwise a token that names the policy's issuer but is
+// signed with the catch-all's key would pass (#51).
+func TestWithIssuerPolicyJWKSWins(t *testing.T) {
+	t.Parallel()
+	luther := policyMinter{t: t, key: MakeTestKey()}
+	idp := policyMinter{t: t, key: MakeTestKey()}
+	lutherURL := luther.jwksServer().URL + "/jwks.json"
+	idpURL := idp.jwksServer().URL + "/jwks.json"
+	catchAll := WithIssuerToWebKeyURL(func(string) (string, error) { return lutherURL, nil })
+	policy := WithIssuerPolicy(map[string]IssuerPolicy{
+		"luther:auth:":        {},
+		"https://idp.example": {JWKSURL: idpURL},
+	})
+	for name, opts := range map[string][]Option{
+		"catch-all first": {catchAll, policy},
+		"policy first":    {policy, catchAll},
+	} {
+		t.Run(name, func(t *testing.T) {
+			settings := NewSettings(opts...)
+			_, err := ValidateRS256(settings, &TestClaims{}, idp.mint("https://idp.example", "", "w"))
+			require.NoError(t, err, "IdP token checked against the wrong JWKS")
+			_, err = ValidateRS256(settings, &TestClaims{}, luther.mint("https://idp.example", "", "w"))
+			require.Error(t, err, "lutherauth key accepted for the IdP issuer")
+			_, err = ValidateRS256(settings, &TestClaims{}, luther.mint("luther:auth:", "", "alice"))
+			require.NoError(t, err, "issuer without a JWKSURL lost the other key options")
+		})
+	}
+}
+
+// TestWithIssuerPolicyReplacesOlderAudience checks that a policy's audience
+// is the whole accepted set for its issuer, so a policy can make an older,
+// wider WithExpectedAudience stricter.
+func TestWithIssuerPolicyReplacesOlderAudience(t *testing.T) {
+	t.Parallel()
+	m := policyMinter{t: t, key: MakeTestKey()}
+	settings := NewSettings(
+		WithHardcodedKey(m.key.PubKey, m.key.Kid),
+		WithExpectedAudience(func(string) []string { return []string{"legacy-app"} }),
+		WithIssuerPolicy(map[string]IssuerPolicy{"luther:auth:": {Audience: []string{"my-app"}}}),
+	)
+	_, err := ValidateRS256(settings, &TestClaims{}, m.mint("luther:auth:", "legacy-app", "alice"))
+	require.ErrorContains(t, err, "audience not accepted")
+	_, err = ValidateRS256(settings, &TestClaims{}, m.mint("luther:auth:", "my-app", "alice"))
+	require.NoError(t, err)
+}
+
+// TestWithIssuerPolicyAccumulates checks that several calls add issuers.
+func TestWithIssuerPolicyAccumulates(t *testing.T) {
+	t.Parallel()
+	m := policyMinter{t: t, key: MakeTestKey()}
+	settings := NewSettings(
+		WithHardcodedKey(m.key.PubKey, m.key.Kid),
+		WithIssuerPolicy(map[string]IssuerPolicy{"a": {}}),
+		WithIssuerPolicy(map[string]IssuerPolicy{"b": {}}),
+	)
+	for _, iss := range []string{"a", "b"} {
+		_, err := ValidateRS256(settings, &TestClaims{}, m.mint(iss, "", "alice"))
+		require.NoError(t, err, iss)
+	}
+}

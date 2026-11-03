@@ -84,11 +84,14 @@ claimGetter := claims.NewJWKClaims(
 )
 ```
 
-An issuer that is not a key of the map is refused before a key is
-fetched. An empty field is not checked. An empty map accepts no token.
-The older options (`WithExpectedIssuers`, `WithExpectedAudience`,
-`WithExpectedSubject`, `WithIssuerToWebKeyURL`) still work, and
-`WithIssuerPolicy` adds to them.
+- An issuer that is not a key of the map (or in `WithExpectedIssuers`) is
+  refused before a key is fetched. An empty map accepts no token.
+- For an issuer in the map, `JWKSURL`, `Audience` and `Subject` win over the
+  older options (`WithIssuerToWebKeyURL`, `WithExpectedAudience`,
+  `WithExpectedSubject`), whatever the option order.
+- An empty `Audience` or `Subject` is not checked, unless an older option
+  checks it. An empty `JWKSURL` takes the keys from the other key options.
+- The older options still work for issuers that are not in the map.
 
 `ValidateRS256` always refuses a lutherauth refresh token (an issuer that
 ends in `_refresh`). A refresh token is never a bearer token.
