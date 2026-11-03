@@ -3,6 +3,7 @@
 package claims
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,11 +67,14 @@ func TestAddPreValidator(t *testing.T) {
 
 // TestAPIKeyValidatorIgnoresEmptyKey checks that an empty entry in the key
 // list (for example from splitting an empty setting) does not let an empty
-// API key in. A map lookup accepted it.
+// API key in. The header getters refuse an empty value, so this uses a
+// getter that can return one, as a custom TokenGetter may.
 func TestAPIKeyValidatorIgnoresEmptyKey(t *testing.T) {
 	t.Parallel()
-	validator := NewAPIKeyValidator(NewRawTokenGetter("X-API-Key", true), []string{"", "luther"})
-	err := validator.Validate(makeContext(map[string]string{"x-api-key": ""}))
-	require.Error(t, err)
-	require.NoError(t, validator.Validate(makeContext(map[string]string{"x-api-key": "luther"})))
+	key := ""
+	getter := func(context.Context) (string, error) { return key, nil }
+	validator := NewAPIKeyValidator(getter, []string{"", "luther"})
+	require.Error(t, validator.Validate(context.Background()))
+	key = "luther"
+	require.NoError(t, validator.Validate(context.Background()))
 }

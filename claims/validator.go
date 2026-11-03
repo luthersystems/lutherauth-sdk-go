@@ -4,6 +4,7 @@ package claims
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 
 	"github.com/luthersystems/lutherauth-sdk-go/jwt"
@@ -18,22 +19,27 @@ type PreValidator interface {
 
 type apiKeyValidator struct {
 	tokenGetter TokenGetter
-	keys        [][]byte
+	// digests are SHA-256 digests of the keys. Comparing fixed-size
+	// digests keeps the time the same whatever the key lengths are;
+	// ConstantTimeCompare returns at once on a length mismatch.
+	digests [][sha256.Size]byte
 }
 
 // NewAPIKeyValidator validates a valid API key is present.
 func NewAPIKeyValidator(tokenGetter TokenGetter, keys []string) PreValidator {
-	// A slice compared in constant time, not a map: a map lookup's time
-	// depends on the key, and these are secrets.
-	keyBytes := make([][]byte, 0, len(keys))
+	// Digests compared in constant time, not a map: a map lookup's time
+	// depends on the key, and these are secrets. An empty entry (for
+	// example from splitting an empty setting) is dropped, so it can never
+	// match an empty key.
+	digests := make([][sha256.Size]byte, 0, len(keys))
 	for _, k := range keys {
 		if k != "" {
-			keyBytes = append(keyBytes, []byte(k))
+			digests = append(digests, sha256.Sum256([]byte(k)))
 		}
 	}
 	return &apiKeyValidator{
 		tokenGetter: tokenGetter,
-		keys:        keyBytes,
+		digests:     digests,
 	}
 }
 
@@ -43,11 +49,11 @@ func (s *apiKeyValidator) Validate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	got := []byte(apiKey)
+	got := sha256.Sum256([]byte(apiKey))
 	ok := false
-	for _, k := range s.keys {
+	for _, k := range s.digests {
 		// Check every key, so the time does not show which one matched.
-		if subtle.ConstantTimeCompare(got, k) == 1 {
+		if subtle.ConstantTimeCompare(got[:], k[:]) == 1 {
 			ok = true
 		}
 	}
