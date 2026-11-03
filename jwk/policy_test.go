@@ -217,3 +217,34 @@ func TestWithIssuerPolicyAccumulates(t *testing.T) {
 		require.NoError(t, err, iss)
 	}
 }
+
+// TestIssuerPolicyLookupIsSafe pins the answers to a review question on
+// retrieveWebKeys: its policy lookup cannot panic, and it never sees an
+// issuer the policy refuses. A read of a nil map gives the zero value, so
+// settings without WithIssuerPolicy fall through to the older options. A
+// pinned settings refuses an unknown issuer before any key fetch, so that
+// issuer never reaches retrieveWebKeys or a JWKS server.
+func TestIssuerPolicyLookupIsSafe(t *testing.T) {
+	t.Parallel()
+
+	// No policy: issuerPolicies is nil. The lookup must not panic, and the
+	// older key option must still serve the token.
+	settings, mint, fetches := issuerTestSetup(t)
+	require.Nil(t, settings.issuerPolicies)
+	require.NotPanics(t, func() {
+		_, err := ValidateRS256(settings, &TestClaims{}, mint("luther:auth:"))
+		require.NoError(t, err)
+	})
+	require.EqualValues(t, 1, fetches.Load())
+
+	// Policy: an issuer not in it is refused with no key fetch, from the
+	// policy URL or the older option.
+	m := policyMinter{t: t, key: MakeTestKey()}
+	srv := m.jwksServer()
+	settings, mint, fetches = issuerTestSetup(t, WithIssuerPolicy(map[string]IssuerPolicy{
+		"luther:auth:": {JWKSURL: srv.URL + "/jwks.json"},
+	}))
+	_, err := ValidateRS256(settings, &TestClaims{}, mint("someone:else"))
+	require.ErrorIs(t, err, ErrIssuerNotAccepted)
+	require.Zero(t, fetches.Load())
+}

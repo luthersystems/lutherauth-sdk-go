@@ -300,6 +300,9 @@ func (s *Settings) retrieveWebKeys(issuer string) (*gojwk.Key, error) {
 	if client == nil {
 		client = newHTTPClient()
 	}
+	// A read of a nil map gives the zero value, so this cannot panic when
+	// WithIssuerPolicy is not set. ValidateRS256 has already refused an
+	// empty, refresh or unpinned issuer, so only an accepted issuer gets here.
 	if url := s.issuerPolicies[issuer].JWKSURL; url != "" {
 		return retrieveWebKeys(client, url)
 	}
