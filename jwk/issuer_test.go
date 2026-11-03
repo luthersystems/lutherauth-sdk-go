@@ -98,9 +98,9 @@ func TestValidateErrorOmitsToken(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ValidateRS256(settings, &TestClaims{}, tok)
 	require.Error(t, err)
-	require.False(t, strings.Contains(err.Error(), tok), "error text contains the token")
+	require.NotContains(t, err.Error(), tok, "error text contains the token")
 	sig := tok[strings.LastIndex(tok, ".")+1:]
-	require.False(t, strings.Contains(err.Error(), sig), "error text contains the signature")
+	require.NotContains(t, err.Error(), sig, "error text contains the signature")
 }
 
 func kidOf(t *testing.T, s *Settings) string {
