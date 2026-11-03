@@ -247,11 +247,16 @@ type Settings struct {
 	// from the given issuer. A nil function or an empty result means the
 	// subject is not checked for that issuer (backwards-compatible).
 	expectedSubjectFn func(issuer string) []string
-	// expectedIssuers, when not empty, is the only set of accepted `iss`
-	// values (WithExpectedIssuers).
+	// expectedIssuers is the only set of accepted `iss` values when
+	// pinIssuers is set (WithExpectedIssuers). An empty set then accepts
+	// nothing, so a pin whose list came out empty fails closed.
 	expectedIssuers []string
-	httpClient      *http.Client
-	getNow          func() time.Time // Allows us to mock the current time
+	pinIssuers      bool
+	// allowRefreshIssuers turns off the refusal of `_refresh` issuers
+	// (WithAllowRefreshIssuers).
+	allowRefreshIssuers bool
+	httpClient          *http.Client
+	getNow              func() time.Time // Allows us to mock the current time
 }
 
 func (s *Settings) getKey(issuer string, kid string) *rsa.PublicKey {
@@ -458,11 +463,35 @@ const RefreshIssuerSuffix = "_refresh"
 // ValidateRS256 accepts any issuer whose keys it can find, so a relying
 // party that maps every issuer to one JWKS accepts every token that key
 // signed, whatever its issuer (lutherauth-sdk-go#51). Several calls add to
-// the list.
+// the list. A call with no issuers (an unset setting) accepts no token at
+// all: a pin that is set but empty must not quietly turn into no pin.
 func WithExpectedIssuers(issuers ...string) Option {
 	return func(s *Settings) {
+		s.pinIssuers = true
 		s.expectedIssuers = append(s.expectedIssuers, issuers...)
 	}
+}
+
+// WithAllowRefreshIssuers turns off the refusal of issuers that end in
+// RefreshIssuerSuffix. Use it only for an IdP that is not lutherauth and
+// whose real issuer ends that way.
+func WithAllowRefreshIssuers() Option {
+	return func(s *Settings) {
+		s.allowRefreshIssuers = true
+	}
+}
+
+// maxIssuerInError caps how much of an unverified issuer goes into an
+// error. The issuer comes from the caller before any signature check, and
+// callers log these errors.
+const maxIssuerInError = 64
+
+// issuerForError returns the issuer, cut to maxIssuerInError bytes.
+func issuerForError(issuer string) string {
+	if len(issuer) > maxIssuerInError {
+		return issuer[:maxIssuerInError] + "..."
+	}
+	return issuer
 }
 
 // audienceIntersects reports whether any element of have appears in want.
@@ -540,11 +569,11 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	}
 	// Both issuer checks run before any key fetch, so a refused token costs
 	// no network call. The signature check below still gates every success.
-	if strings.HasSuffix(issuer, RefreshIssuerSuffix) {
-		return nil, fmt.Errorf("issuer %q: %w", issuer, ErrRefreshToken)
+	if !settings.allowRefreshIssuers && strings.HasSuffix(issuer, RefreshIssuerSuffix) {
+		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrRefreshToken)
 	}
-	if len(settings.expectedIssuers) > 0 && !slices.Contains(settings.expectedIssuers, issuer) {
-		return nil, fmt.Errorf("issuer %q: %w", issuer, ErrIssuerNotAccepted)
+	if settings.pinIssuers && !slices.Contains(settings.expectedIssuers, issuer) {
+		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrIssuerNotAccepted)
 	}
 	alg, ok := parsedToken.Header["alg"].(string)
 	if !ok || alg != "RS256" {
