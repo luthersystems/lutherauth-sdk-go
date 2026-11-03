@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -469,6 +470,58 @@ func WithExpectedIssuers(issuers ...string) Option {
 	return func(s *Settings) {
 		s.pinIssuers = true
 		s.expectedIssuers = append(s.expectedIssuers, issuers...)
+	}
+}
+
+// IssuerPolicy is what a relying party accepts from one issuer. An empty
+// field is not checked, the same as the older per-issuer options.
+type IssuerPolicy struct {
+	// JWKSURL is where the issuer's signing keys are. For lutherauth it is
+	// https://<auth host>/v1/auth/.well-known/jwks.json. Empty means the
+	// keys come from the other key options (WithIssuerToWebKeyURL,
+	// WithRetrieveWebKeysFn, WithHardcodedKey).
+	JWKSURL string
+	// Audience is the set of accepted `aud` values. A token must carry at
+	// least one of them.
+	Audience []string
+	// Subject is the set of accepted `sub` values, for an issuer whose
+	// tokens name one workload, such as a CI or Vercel OIDC identity.
+	Subject []string
+}
+
+// WithIssuerPolicy sets, in one place, the issuers whose tokens are
+// accepted and what each one must carry. A token from an issuer that is not
+// a key of policies is refused before a key is fetched, as with
+// WithExpectedIssuers. An empty map accepts no token.
+//
+// It is the same as WithExpectedIssuers with the map's keys, plus
+// WithExpectedAudience, WithExpectedSubject and WithIssuerToWebKeyURL for
+// each entry. It adds to those options and does not replace them, so a
+// caller can move to it one issuer at a time. The map and its slices are
+// copied, so a later change to them has no effect.
+func WithIssuerPolicy(policies map[string]IssuerPolicy) Option {
+	cp := make(map[string]IssuerPolicy, len(policies))
+	hasURL := false
+	for iss, p := range policies {
+		cp[iss] = IssuerPolicy{
+			JWKSURL:  p.JWKSURL,
+			Audience: slices.Clone(p.Audience),
+			Subject:  slices.Clone(p.Subject),
+		}
+		hasURL = hasURL || p.JWKSURL != ""
+	}
+	issuers := slices.Sorted(maps.Keys(cp))
+	return func(s *Settings) {
+		WithExpectedIssuers(issuers...)(s)
+		WithExpectedAudience(func(iss string) []string { return cp[iss].Audience })(s)
+		WithExpectedSubject(func(iss string) []string { return cp[iss].Subject })(s)
+		// Only add a URL lookup when a policy has a URL. Otherwise a policy
+		// with no URLs would change how the other key options are tried.
+		if hasURL {
+			WithIssuerToWebKeyURL(func(iss string) (string, error) {
+				return cp[iss].JWKSURL, nil
+			})(s)
+		}
 	}
 }
 

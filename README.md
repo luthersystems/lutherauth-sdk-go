@@ -62,21 +62,33 @@ func MyHandler(ctx context.Context) error {
 
 ### Pin the issuer
 
-Always pass the issuers you trust. Without `jwk.WithExpectedIssuers`, any
-issuer whose keys the settings can find is accepted, so a service that maps
-every issuer to one JWKS accepts every token that key signed.
+Always say which issuers you trust. Without a pin, any issuer whose keys
+the settings can find is accepted, so a service that maps every issuer to
+one JWKS accepts every token that key signed.
+
+`jwk.WithIssuerPolicy` sets each trusted issuer, its JWKS and what its
+tokens must carry, in one place:
 
 ```go
 claimGetter := claims.NewJWKClaims(
     claims.NewAuthTokenGetter(),
     nil,
     logger,
-    jwk.WithIssuerToWebKeyURL(func(string) (string, error) {
-        return "https://app.example.com/v1/auth/.well-known/jwks.json", nil
+    jwk.WithIssuerPolicy(map[string]jwk.IssuerPolicy{
+        // lutherauth: AUTH_JWT_ISSUER and AUTH_OAUTH_APPLICATION_AUDIENCE.
+        "luther:auth:": {
+            JWKSURL:  "https://app.example.com/v1/auth/.well-known/jwks.json",
+            Audience: []string{"my-app"},
+        },
     }),
-    jwk.WithExpectedIssuers("luther:auth:"),
 )
 ```
+
+An issuer that is not a key of the map is refused before a key is
+fetched. An empty field is not checked. An empty map accepts no token.
+The older options (`WithExpectedIssuers`, `WithExpectedAudience`,
+`WithExpectedSubject`, `WithIssuerToWebKeyURL`) still work, and
+`WithIssuerPolicy` adds to them.
 
 `ValidateRS256` always refuses a lutherauth refresh token (an issuer that
 ends in `_refresh`). A refresh token is never a bearer token.
