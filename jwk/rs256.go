@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -246,8 +247,16 @@ type Settings struct {
 	// from the given issuer. A nil function or an empty result means the
 	// subject is not checked for that issuer (backwards-compatible).
 	expectedSubjectFn func(issuer string) []string
-	httpClient        *http.Client
-	getNow            func() time.Time // Allows us to mock the current time
+	// expectedIssuers is the only set of accepted `iss` values when
+	// pinIssuers is set (WithExpectedIssuers). An empty set then accepts
+	// nothing, so a pin whose list came out empty fails closed.
+	expectedIssuers []string
+	pinIssuers      bool
+	// allowRefreshIssuers turns off the refusal of `_refresh` issuers
+	// (WithAllowRefreshIssuers).
+	allowRefreshIssuers bool
+	httpClient          *http.Client
+	getNow              func() time.Time // Allows us to mock the current time
 }
 
 func (s *Settings) getKey(issuer string, kid string) *rsa.PublicKey {
@@ -438,6 +447,53 @@ func WithExpectedSubject(subjectForIssuer func(issuer string) []string) Option {
 	}
 }
 
+// ErrIssuerNotAccepted is returned when a token's issuer is not in the
+// list set with WithExpectedIssuers.
+var ErrIssuerNotAccepted = errors.New("issuer not accepted")
+
+// ErrRefreshToken is returned for a lutherauth refresh token. lutherauth
+// marks refresh tokens with an issuer that ends in RefreshIssuerSuffix.
+var ErrRefreshToken = errors.New("refresh token is not a bearer token")
+
+// RefreshIssuerSuffix ends the issuer of every lutherauth refresh token.
+const RefreshIssuerSuffix = "_refresh"
+
+// WithExpectedIssuers sets the issuers whose tokens are accepted. A token
+// from any other issuer is refused before a key is fetched. Without it,
+// ValidateRS256 accepts any issuer whose keys it can find, so a relying
+// party that maps every issuer to one JWKS accepts every token that key
+// signed, whatever its issuer (lutherauth-sdk-go#51). Several calls add to
+// the list. A call with no issuers (an unset setting) accepts no token at
+// all: a pin that is set but empty must not quietly turn into no pin.
+func WithExpectedIssuers(issuers ...string) Option {
+	return func(s *Settings) {
+		s.pinIssuers = true
+		s.expectedIssuers = append(s.expectedIssuers, issuers...)
+	}
+}
+
+// WithAllowRefreshIssuers turns off the refusal of issuers that end in
+// RefreshIssuerSuffix. Use it only for an IdP that is not lutherauth and
+// whose real issuer ends that way.
+func WithAllowRefreshIssuers() Option {
+	return func(s *Settings) {
+		s.allowRefreshIssuers = true
+	}
+}
+
+// maxIssuerInError caps how much of an unverified issuer goes into an
+// error. The issuer comes from the caller before any signature check, and
+// callers log these errors.
+const maxIssuerInError = 64
+
+// issuerForError returns the issuer, cut to maxIssuerInError bytes.
+func issuerForError(issuer string) string {
+	if len(issuer) > maxIssuerInError {
+		return issuer[:maxIssuerInError] + "..."
+	}
+	return issuer
+}
+
 // audienceIntersects reports whether any element of have appears in want.
 func audienceIntersects(have jwtgo.ClaimStrings, want []string) bool {
 	for _, h := range have {
@@ -484,7 +540,15 @@ func isAfterWithDrift(t1, t2 time.Time) bool {
 }
 
 // ValidateRS256 validates a RS256 JWK and returns the claims if valid.
-// IMPORTANT: This does not validate the issuer.
+//
+// It always refuses a lutherauth refresh token (an issuer ending in
+// RefreshIssuerSuffix), which is never a bearer token. Until
+// luthersystems/lutherauth#101, lutherauth signed refresh tokens with its
+// access token key, so the issuer was the only thing that told them apart.
+//
+// IMPORTANT: it checks the issuer against a list only when
+// WithExpectedIssuers is set. Without it, any issuer whose keys the
+// settings can find is accepted.
 func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo.Claims, error) {
 	if token == "" {
 		return nil, errors.New("missing token")
@@ -502,6 +566,14 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	issuer := regClaims.Issuer
 	if issuer == "" {
 		return nil, errors.New("missing issuer")
+	}
+	// Both issuer checks run before any key fetch, so a refused token costs
+	// no network call. The signature check below still gates every success.
+	if !settings.allowRefreshIssuers && strings.HasSuffix(issuer, RefreshIssuerSuffix) {
+		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrRefreshToken)
+	}
+	if settings.pinIssuers && !slices.Contains(settings.expectedIssuers, issuer) {
+		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrIssuerNotAccepted)
 	}
 	alg, ok := parsedToken.Header["alg"].(string)
 	if !ok || alg != "RS256" {
@@ -593,7 +665,9 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	// This parses the claims *AND* validates the token
 	parsedToken, err = parseClaims(token, signKey, true, claims)
 	if err != nil {
-		return nil, fmt.Errorf("validate (%s): %w: %s", issuer, err, token)
+		// Never put the token in the error: callers log it, and the token is
+		// a bearer credential (lutherauth-sdk-go#51).
+		return nil, fmt.Errorf("validate (%s): %w", issuer, err)
 	}
 
 	return parsedToken.Claims, nil

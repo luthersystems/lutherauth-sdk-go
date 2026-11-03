@@ -60,6 +60,27 @@ func MyHandler(ctx context.Context) error {
 }
 ```
 
+### Pin the issuer
+
+Always pass the issuers you trust. Without `jwk.WithExpectedIssuers`, any
+issuer whose keys the settings can find is accepted, so a service that maps
+every issuer to one JWKS accepts every token that key signed.
+
+```go
+claimGetter := claims.NewJWKClaims(
+    claims.NewAuthTokenGetter(),
+    nil,
+    logger,
+    jwk.WithIssuerToWebKeyURL(func(string) (string, error) {
+        return "https://app.example.com/v1/auth/.well-known/jwks.json", nil
+    }),
+    jwk.WithExpectedIssuers("luther:auth:"),
+)
+```
+
+`ValidateRS256` always refuses a lutherauth refresh token (an issuer that
+ends in `_refresh`). A refresh token is never a bearer token.
+
 ### Local Development (Fake Claims)
 
 ```go

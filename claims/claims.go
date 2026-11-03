@@ -5,6 +5,8 @@ package claims
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 
@@ -124,7 +126,10 @@ func (s *jwkClaims) Claims(ctx context.Context) (*jwt.Claims, error) {
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "could not read CSRF token/nonce")
 		}
-		if nonce != claims.Nonce {
+		// Compare digests in constant time, so the response time tells a
+		// caller neither how much of a guessed nonce is right nor its length.
+		gotNonce, wantNonce := sha256.Sum256([]byte(nonce)), sha256.Sum256([]byte(claims.Nonce))
+		if subtle.ConstantTimeCompare(gotNonce[:], wantNonce[:]) != 1 {
 			return nil, status.Error(codes.Unauthenticated, "could not validate CSRF token/nonce")
 		}
 	}
