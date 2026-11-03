@@ -21,20 +21,17 @@ jobs:
         with:
           go-version: "1.26.x"
           cache: false
-      - name: golangci-lint
+      # golangci-lint itself runs in the shared Quality workflow
+      # (.github/workflows/quality.yml). `golangci-lint run` does NOT reject an
+      # unknown key in .golangci.yml (a misspelled setting is silently
+      # ignored); only the schema check does, and the shared workflow does not
+      # run it yet, so it stays here. Keep the version equal to the shared
+      # workflow's pin.
+      - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          # Fleet-wide pin (matches luthersystems/ui-core); built with go1.26,
-          # matching the go-version above.
-          version: v2.13.2
-          args: --timeout=5m ./...
-          # `verify: true` fetches the JSON schema from golangci-lint.run on
-          # every run, and a timeout there fails the job for a reason no PR can
-          # fix (seen in luthersystems/elps). The next step runs the same
-          # check offline: v2.13 embeds the schema in the binary.
-          verify: false
-      # `golangci-lint run` does NOT reject an unknown key in .golangci.yml (a
-      # misspelled setting is silently ignored); only the schema check does.
+          version: v2.15.0
+          install-only: true
       - name: golangci-lint config schema
         run: golangci-lint config verify
   build:
