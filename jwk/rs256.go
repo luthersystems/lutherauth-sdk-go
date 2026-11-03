@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -247,11 +248,15 @@ type Settings struct {
 	// from the given issuer. A nil function or an empty result means the
 	// subject is not checked for that issuer (backwards-compatible).
 	expectedSubjectFn func(issuer string) []string
-	// expectedIssuers is the only set of accepted `iss` values when
-	// pinIssuers is set (WithExpectedIssuers). An empty set then accepts
+	// expectedIssuers, with the keys of issuerPolicies, is the only set of
+	// accepted `iss` values when pinIssuers is set (WithExpectedIssuers,
+	// WithIssuerPolicy). An empty set then accepts
 	// nothing, so a pin whose list came out empty fails closed.
 	expectedIssuers []string
 	pinIssuers      bool
+	// issuerPolicies are the per-issuer settings of WithIssuerPolicy. Each
+	// key is also an accepted issuer when pinIssuers is set.
+	issuerPolicies map[string]IssuerPolicy
 	// allowRefreshIssuers turns off the refusal of `_refresh` issuers
 	// (WithAllowRefreshIssuers).
 	allowRefreshIssuers bool
@@ -291,6 +296,16 @@ func (s *Settings) retrieveWebKeys(issuer string) (*gojwk.Key, error) {
 	if issuer == "" {
 		return nil, errors.New("invalid issuer")
 	}
+	client := s.httpClient
+	if client == nil {
+		client = newHTTPClient()
+	}
+	// A read of a nil map gives the zero value, so this cannot panic when
+	// WithIssuerPolicy is not set. ValidateRS256 has already refused an
+	// empty, refresh or unpinned issuer, so only an accepted issuer gets here.
+	if url := s.issuerPolicies[issuer].JWKSURL; url != "" {
+		return retrieveWebKeys(client, url)
+	}
 	if s.retrieveWebKeysFn == nil && s.issuerToWebKeyURLFn == nil {
 		return nil, errors.New("missing all web key fns")
 	}
@@ -314,11 +329,6 @@ func (s *Settings) retrieveWebKeys(issuer string) (*gojwk.Key, error) {
 			return nil, errors.New("retrieveWebKeysFn is not defined and webKeyURL is empty")
 		}
 		return s.retrieveWebKeysFn(issuer)
-	}
-
-	client := s.httpClient
-	if client == nil {
-		client = newHTTPClient()
 	}
 
 	return retrieveWebKeys(client, webKeyURL)
@@ -448,7 +458,7 @@ func WithExpectedSubject(subjectForIssuer func(issuer string) []string) Option {
 }
 
 // ErrIssuerNotAccepted is returned when a token's issuer is not in the
-// list set with WithExpectedIssuers.
+// list set with WithExpectedIssuers or WithIssuerPolicy.
 var ErrIssuerNotAccepted = errors.New("issuer not accepted")
 
 // ErrRefreshToken is returned for a lutherauth refresh token. lutherauth
@@ -469,6 +479,57 @@ func WithExpectedIssuers(issuers ...string) Option {
 	return func(s *Settings) {
 		s.pinIssuers = true
 		s.expectedIssuers = append(s.expectedIssuers, issuers...)
+	}
+}
+
+// IssuerPolicy is what a relying party accepts from one issuer.
+type IssuerPolicy struct {
+	// JWKSURL is where the issuer's signing keys are. For lutherauth it is
+	// https://<auth host>/v1/auth/.well-known/jwks.json. When set, it is
+	// used for this issuer before any other key option, so a catch-all
+	// WithIssuerToWebKeyURL cannot send this issuer to another key. Empty
+	// means the keys come from the other key options.
+	JWKSURL string
+	// Audience is the set of accepted `aud` values. A token must carry at
+	// least one of them. When set, it replaces WithExpectedAudience for this
+	// issuer. Empty means the policy does not set the audience.
+	Audience []string
+	// Subject is the set of accepted `sub` values, for an issuer whose
+	// tokens name one workload, such as a CI or Vercel OIDC identity. When
+	// set, it replaces WithExpectedSubject for this issuer. Empty means the
+	// policy does not set the subject.
+	Subject []string
+}
+
+// WithIssuerPolicy sets, in one place, the issuers whose tokens are
+// accepted and what each one must carry. It turns on the issuer pin, the
+// same as WithExpectedIssuers: a token is accepted only from an issuer that
+// is a key of the map or is listed in WithExpectedIssuers, and is refused
+// before a key is fetched. An empty map, with no WithExpectedIssuers,
+// accepts no token.
+//
+// For an issuer in the map, the policy's non-empty fields win over the
+// older options, whatever their order. The older options still apply to
+// the issuers that are not in the map, so a service can move one issuer at
+// a time, if it lists the others in WithExpectedIssuers. Several calls add
+// to the map; a later entry for the same issuer replaces the earlier one.
+// The map and its slices are copied, so a later change to them has no
+// effect.
+func WithIssuerPolicy(policies map[string]IssuerPolicy) Option {
+	cp := make(map[string]IssuerPolicy, len(policies))
+	for iss, p := range policies {
+		cp[iss] = IssuerPolicy{
+			JWKSURL:  p.JWKSURL,
+			Audience: slices.Clone(p.Audience),
+			Subject:  slices.Clone(p.Subject),
+		}
+	}
+	return func(s *Settings) {
+		s.pinIssuers = true
+		if s.issuerPolicies == nil {
+			s.issuerPolicies = make(map[string]IssuerPolicy, len(cp))
+		}
+		maps.Copy(s.issuerPolicies, cp)
 	}
 }
 
@@ -547,8 +608,8 @@ func isAfterWithDrift(t1, t2 time.Time) bool {
 // access token key, so the issuer was the only thing that told them apart.
 //
 // IMPORTANT: it checks the issuer against a list only when
-// WithExpectedIssuers is set. Without it, any issuer whose keys the
-// settings can find is accepted.
+// WithExpectedIssuers or WithIssuerPolicy is set. Without either, any
+// issuer whose keys the settings can find is accepted.
 func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo.Claims, error) {
 	if token == "" {
 		return nil, errors.New("missing token")
@@ -572,7 +633,8 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	if !settings.allowRefreshIssuers && strings.HasSuffix(issuer, RefreshIssuerSuffix) {
 		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrRefreshToken)
 	}
-	if settings.pinIssuers && !slices.Contains(settings.expectedIssuers, issuer) {
+	policy, hasPolicy := settings.issuerPolicies[issuer]
+	if settings.pinIssuers && !hasPolicy && !slices.Contains(settings.expectedIssuers, issuer) {
 		return nil, fmt.Errorf("issuer %q: %w", issuerForError(issuer), ErrIssuerNotAccepted)
 	}
 	alg, ok := parsedToken.Header["alg"].(string)
@@ -627,15 +689,20 @@ func ValidateRS256(settings *Settings, claims jwtgo.Claims, token string) (jwtgo
 	// forged token cannot pass it. Issuers with no configured allowlist are not
 	// checked, keeping the legacy (lutherauth) path unchanged. Added for Vercel
 	// OIDC federation (luthersystems/reliable#2175).
-	if settings.expectedAudienceFn != nil {
-		if want := settings.expectedAudienceFn(issuer); len(want) > 0 && !audienceIntersects(regClaims.Audience, want) {
-			return nil, fmt.Errorf("audience not accepted for issuer %q", issuer)
-		}
+	// A policy's non-empty field replaces the older option for its issuer.
+	wantAud := policy.Audience
+	if len(wantAud) == 0 && settings.expectedAudienceFn != nil {
+		wantAud = settings.expectedAudienceFn(issuer)
 	}
-	if settings.expectedSubjectFn != nil {
-		if want := settings.expectedSubjectFn(issuer); len(want) > 0 && !slices.Contains(want, regClaims.Subject) {
-			return nil, fmt.Errorf("subject not accepted for issuer %q", issuer)
-		}
+	if len(wantAud) > 0 && !audienceIntersects(regClaims.Audience, wantAud) {
+		return nil, fmt.Errorf("audience not accepted for issuer %q", issuer)
+	}
+	wantSub := policy.Subject
+	if len(wantSub) == 0 && settings.expectedSubjectFn != nil {
+		wantSub = settings.expectedSubjectFn(issuer)
+	}
+	if len(wantSub) > 0 && !slices.Contains(wantSub, regClaims.Subject) {
+		return nil, fmt.Errorf("subject not accepted for issuer %q", issuer)
 	}
 
 	signKey := settings.getKey(issuer, kid)
