@@ -9,8 +9,43 @@ on:
   pull_request:
     branches:
       - main
+  # The merge queue tests the merged commit, and waits for each required
+  # check from this workflow on it.
+  merge_group:
+
 jobs:
+  # Decides whether the build and test jobs must run (scripts/ci-changes.sh).
+  # No paths filter on the workflow: the gate below is a required check, so
+  # every PR must start a run. A docs-only PR skips the jobs instead.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      # On a pull request this checks out the merge commit. Its first parent
+      # is the base branch tip, so depth 2 is enough for the diff.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Test the decision script and the gate's needs list
+        run: bash scripts/ci-changes-test.sh
+      # Only a pull request may skip. Any other event (push, merge group)
+      # runs everything.
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            bash scripts/ci-changes.sh HEAD^1 HEAD | tee -a "$GITHUB_OUTPUT"
+          else
+            bash scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+          fi
+
   golangci:
+    needs: changes
+    if: needs.changes.outputs.code != 'false'
     name: lint
     runs-on: ubuntu-latest
     permissions:
@@ -37,7 +72,8 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: golangci
+    needs: [changes, golangci]
+    if: needs.changes.outputs.code != 'false'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -50,3 +86,36 @@ jobs:
   # pinned govulncheck with go.mod's Go on every PR and push, and on a
   # schedule with a security-drift issue. See
   # https://github.com/luthersystems/.github/blob/main/docs/security-workflow.md
+
+  # The one check main's ruleset requires for this workflow
+  # (common-infrastructure github-org-admin/main_protection.json). One gate
+  # instead of each job by name: matrix jobs get one check per entry, and a
+  # list of names in the ruleset would drift with the workflow.
+  # always(), not !cancelled(): a cancelled run must fail this check. A gate
+  # that is skipped counts as passed for a required check.
+  # scripts/ci-changes-test.sh fails when a job is missing from needs.
+  ci-all:
+    name: CI (all required checks)
+    if: always()
+    needs: [changes, golangci, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Pass only if the changes job succeeded and every other job succeeded,
+      # or was skipped because the changes job said the PR is docs-only
+      # (code=false). Any other skip fails, so a job skipped by mistake
+      # cannot pass the gate.
+      - name: Fail unless every required job passed
+        if: >-
+          needs.changes.result != 'success'
+          || contains(needs.*.result, 'failure')
+          || contains(needs.*.result, 'cancelled')
+          || (needs.changes.outputs.code != 'false' && contains(needs.*.result, 'skipped'))
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON"
+          echo "::error::A required CI job failed, was cancelled or was skipped."
+          exit 1
+      - name: Every required job passed or was skipped as docs-only
+        run: echo "ok"
